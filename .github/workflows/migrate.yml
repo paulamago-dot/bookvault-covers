@@ -59,7 +59,8 @@ jobs:
         run: node scripts/migrate.mjs
 
       # Después de migrar, borra del bucket telegram-covers de Supabase las
-      # copias que ya no usa ningún libro (ya están en GitHub). Solo en la
+      # copias que ya no usa ningún libro (ya están en GitHub) y tienen más de
+      # 48 h (para entonces las cachés nocturnas ya se han regenerado). Solo en la
       # ejecución programada y en las reales, nunca en simulación. Si falla,
       # no pasa nada: se reintenta al día siguiente.
       - name: Limpiar bucket de Supabase
@@ -69,6 +70,6 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           for i in 1 2 3; do
-            curl -s -m 70 "https://bookvault-dusky.vercel.app/api/telegram/clean-orphan-covers?secret=${CRON_SECRET}&force=1" || true
+            curl -s -m 70 "https://bookvault-dusky.vercel.app/api/telegram/clean-orphan-covers?secret=${CRON_SECRET}&force=1&min_horas=48" || true
             echo
           done
