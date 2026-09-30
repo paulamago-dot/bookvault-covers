@@ -96,13 +96,24 @@ async function download(url) {
   try {
     return await downloadDirecto(url);
   } catch (e) {
-    // Algunas webs (p. ej. martaentrelibros.com) devuelven 403 a cualquier IP
-    // de centro de datos. Reintento a través del proxy público wsrv.nl, que
-    // descarga la imagen desde su propia infraestructura.
-    if (/HTTP 40[13]/.test(e.message) && !url.startsWith("https://wsrv.nl/")) {
-      return await downloadDirecto(`https://wsrv.nl/?url=${encodeURIComponent(url)}`);
+    // Algunas webs (martaentrelibros.com, delectoralector.com, webs de autores)
+    // devuelven 403 a cualquier IP de centro de datos. Reintento a través de
+    // proxies de imágenes que descargan desde su propia infraestructura:
+    //   1. wsrv.nl (funciona con Marta)
+    //   2. i0.wp.com, el CDN de imágenes de WordPress (funciona con De Lector
+    //      a Lector, paulpen.com, nick-clausen.com, que también bloquean wsrv.nl)
+    if (!/HTTP 40[13]/.test(e.message)) throw e;
+    const sinEsquema = url.replace(/^https?:\/\//, "").replace(/[?#].*$/, "");
+    const proxies = [
+      `https://wsrv.nl/?url=${encodeURIComponent(url)}`,
+      `https://i0.wp.com/${sinEsquema}`,
+    ];
+    let ultimo = e;
+    for (const p of proxies) {
+      try { return await downloadDirecto(p); }
+      catch (err) { ultimo = err; }
     }
-    throw e;
+    throw ultimo;
   }
 }
 
