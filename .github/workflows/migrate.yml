@@ -1,0 +1,55 @@
+name: Migrar caratulas
+
+on:
+  workflow_dispatch:
+    inputs:
+      tables:
+        description: "Tablas (separadas por comas)"
+        default: "marta_books,lecturalia_books,delectoralector_books,telegram_books"
+      limit:
+        description: "Maximo de caratulas (0 = todas)"
+        default: "20"
+      dry:
+        description: "Simulacion (no escribe nada)"
+        type: boolean
+        default: true
+      max_minutes:
+        description: "Cortar pasados estos minutos"
+        default: "300"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: migrar-caratulas
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          sparse-checkout: |
+            scripts
+            .github
+          sparse-checkout-cone-mode: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm install --no-audit --no-fund --no-package-lock
+
+      - name: Migrar
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
+          TABLES: ${{ inputs.tables }}
+          LIMIT: ${{ inputs.limit }}
+          DRY: ${{ inputs.dry }}
+          MAX_MINUTES: ${{ inputs.max_minutes }}
+        run: node scripts/migrate.mjs
