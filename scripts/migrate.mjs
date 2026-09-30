@@ -93,6 +93,20 @@ function fileId(id) {
 }
 
 async function download(url) {
+  try {
+    return await downloadDirecto(url);
+  } catch (e) {
+    // Algunas webs (p. ej. martaentrelibros.com) devuelven 403 a cualquier IP
+    // de centro de datos. Reintento a través del proxy público wsrv.nl, que
+    // descarga la imagen desde su propia infraestructura.
+    if (/HTTP 40[13]/.test(e.message) && !url.startsWith("https://wsrv.nl/")) {
+      return await downloadDirecto(`https://wsrv.nl/?url=${encodeURIComponent(url)}`);
+    }
+    throw e;
+  }
+}
+
+async function downloadDirecto(url) {
   for (let intento = 1; intento <= 2; intento++) {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
