@@ -1,6 +1,11 @@
 name: Migrar caratulas
 
 on:
+  # Cada día a las 04:30 UTC (06:30 en Madrid en verano, 05:30 en invierno),
+  # después del Dedup Nightly: pasa a GitHub las portadas nuevas del pipeline
+  # y reintenta las que fallaron. Sin inputs = todas las tablas, sin límite, real.
+  schedule:
+    - cron: "30 4 * * *"
   workflow_dispatch:
     inputs:
       targets:
