@@ -160,14 +160,37 @@ function pushBatch(target, prefix, n) {
   }
 }
 
+// Busca por TRAMOS de ids (WINDOW ids por consulta) usando el índice de la
+// clave primaria. Antes era "desde lastId, las 200 siguientes que cumplan el
+// filtro": cuando quedaban pocas y dispersas, Postgres recorría cientos de
+// miles de filas sin encontrar ninguna y Supabase cortaba la consulta
+// ("canceling statement due to statement timeout").
+const WINDOW = 20000;
+
+async function idExtremo(table, asc) {
+  const { data, error } = await supabase.from(table).select("id")
+    .order("id", { ascending: asc }).limit(1);
+  if (error) throw new Error(`${table}: ${error.message}`);
+  return data?.[0]?.id ?? null;
+}
+
 async function migrateTarget(target) {
   const [table, column] = target.split(".");
   const { prefix } = TARGETS[target];
   porDestino[target] = { subidas: 0 };
-  let lastId = null;
+
+  const minId = await idExtremo(table, true);
+  const maxId = await idExtremo(table, false);
+  if (minId === null) return "fin";
+  // Ids numéricos: tramos. Ids de texto (books, book_corrections): tablas
+  // pequeñas, se recorren enteras de 200 en 200 como antes.
+  const numerico = typeof minId === "number";
+
+  let lastId = numerico ? minId - 1 : null;
   while (true) {
     if (Date.now() - start > MAX_MS) return "tiempo";
     if (LIMIT && stats.procesadas >= LIMIT) return "limite";
+    if (numerico && lastId >= maxId) return "fin";
 
     const pageSize = LIMIT ? Math.min(PAGE, LIMIT - stats.procesadas) : PAGE;
     let q = supabase
@@ -177,10 +200,18 @@ async function migrateTarget(target) {
       .not(column, "ilike", `%${REPO_HOST}%`)
       .order("id", { ascending: true })
       .limit(pageSize);
-    if (lastId !== null) q = q.gt("id", lastId);
+    if (numerico) {
+      q = q.gt("id", lastId).lte("id", lastId + WINDOW);
+    } else if (lastId !== null) {
+      q = q.gt("id", lastId);
+    }
     const { data: rows, error } = await q;
     if (error) throw new Error(`${target}: ${error.message}`);
-    if (!rows.length) return "fin";
+    if (!rows.length) {
+      if (!numerico) return "fin";
+      lastId += WINDOW;          // tramo vacío: al siguiente
+      continue;
+    }
     lastId = rows[rows.length - 1].id;
     stats.procesadas += rows.length;
 
