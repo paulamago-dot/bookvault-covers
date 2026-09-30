@@ -173,16 +173,47 @@ async function pool(items, fn, contarFallos = true) {
   return out;
 }
 
-function pushBatch(target, prefix, n) {
+// CAMBIO (2026-09-30): antes se hacía push de cada tanda de 200 (uno cada
+// 6-10 s) y GitHub acabó devolviendo "Internal Server Error" (recomienda no
+// pasar de 6 pushes/min por repo). Ahora cada tanda se commitea en local y se
+// sube cada PUSH_EVERY portadas, con reintentos espaciados. Supabase se
+// actualiza SOLO después de un push confirmado.
+const PUSH_EVERY = 1000;
+const ESPERAS_PUSH_S = [30, 60, 120, 240];
+let pendientes = [];   // { table, column, target, id, path } ya commiteadas, sin push
+
+function commitLocal(target, prefix, n) {
   sh(`git add --sparse -A ${prefix}`);
   sh(`git -c user.name="bookvault-bot" -c user.email="bot@users.noreply.github.com" commit -q -m "${target}: +${n}"`);
-  for (let intento = 1; intento <= 3; intento++) {
+}
+
+async function pushConReintentos() {
+  for (let intento = 0; ; intento++) {
     try { sh("git push -q origin HEAD:main"); return; }
     catch (e) {
-      if (intento === 3) throw e;
-      sh("git pull -q --rebase origin main");
+      if (intento >= ESPERAS_PUSH_S.length) throw e;
+      const espera = ESPERAS_PUSH_S[intento];
+      console.log(`push fallido, reintento en ${espera}s`);
+      await sleep(espera * 1000);
+      try { sh("git pull -q --rebase origin main"); } catch {}
     }
   }
+}
+
+async function flush() {
+  if (!pendientes.length) return;
+  await pushConReintentos();
+  // Push confirmado: ya se puede apuntar Supabase a GitHub
+  const lote = pendientes;
+  pendientes = [];
+  await pool(lote, async r => {
+    const { error: upErr } = await supabase
+      .from(r.table).update({ [r.column]: `${RAW_BASE}/${r.path}` }).eq("id", r.id);
+    if (upErr) throw new Error(`update: ${upErr.message}`);
+    stats.subidas++;
+    porDestino[r.target].subidas++;
+  });
+  console.log(`push + update: ${stats.subidas} subidas, ${stats.placeholders} placeholders, ${stats.fallidas} fallidas`);
 }
 
 // Busca por TRAMOS de ids (WINDOW ids por consulta) usando el índice de la
@@ -249,17 +280,10 @@ async function migrateTarget(target) {
       mkdirSync(dirname(r.path), { recursive: true });
       writeFileSync(r.path, r.webp);
     }
-    pushBatch(target, prefix, ok.length);
-
-    // Push confirmado: ya se puede apuntar Supabase a GitHub
-    await pool(ok, async r => {
-      const { error: upErr } = await supabase
-        .from(table).update({ [column]: `${RAW_BASE}/${r.path}` }).eq("id", r.id);
-      if (upErr) throw new Error(`update: ${upErr.message}`);
-      stats.subidas++;
-      porDestino[target].subidas++;
-    });
-    console.log(`${target}: hasta id ${lastId} -> ${stats.subidas} subidas, ${stats.placeholders} placeholders, ${stats.fallidas} fallidas`);
+    commitLocal(target, prefix, ok.length);
+    for (const r of ok) pendientes.push({ table, column, target, id: r.id, path: r.path });
+    console.log(`${target}: hasta id ${lastId} -> ${pendientes.length} pendientes de subir`);
+    if (pendientes.length >= PUSH_EVERY) await flush();
   }
 }
 
@@ -268,6 +292,7 @@ for (const t of targets) {
   motivo = await migrateTarget(t);
   if (motivo !== "fin") break;
 }
+await flush();   // lo que quede commiteado sin subir
 
 const mb = b => (b / 1024 / 1024).toFixed(2);
 const convertidas = stats.procesadas - stats.fallidas - stats.placeholders;
