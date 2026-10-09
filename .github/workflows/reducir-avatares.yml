@@ -1,0 +1,49 @@
+name: Reducir avatares
+
+# Manual. Reduce a WebP 256 px las fotos de perfil grandes que ya están en el
+# bucket "avatars" de Supabase y actualiza profiles.avatar_url.
+# Las fotos se quedan en Supabase (no se suben a este repo, que es público).
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry:
+        description: "Simulacion (no escribe nada)"
+        type: boolean
+        default: true
+      min_kb:
+        description: "Solo fotos de mas de estos KB"
+        default: "100"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reducir-avatares
+  cancel-in-progress: false
+
+jobs:
+  reducir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          sparse-checkout: |
+            scripts
+          sparse-checkout-cone-mode: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm install --no-audit --no-fund --no-package-lock
+
+      - name: Reducir
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          DRY: ${{ inputs.dry }}
+          MIN_KB: ${{ inputs.min_kb }}
+        run: node scripts/reducir-avatares.mjs
